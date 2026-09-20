@@ -9,7 +9,10 @@ LOCAL_MODULE := main
 SDL_PATH := ../SDL
 SRC := engine
 
+# The engine does #include <SDL2/SDL.h>, but SDL ships its headers flat in include/.
+# The workflow creates jni/src/sdl2_prefix/SDL2 -> ../../SDL/include so both spellings resolve.
 LOCAL_C_INCLUDES := \
+    $(LOCAL_PATH)/sdl2_prefix \
     $(LOCAL_PATH)/$(SDL_PATH)/include \
     $(LOCAL_PATH)/$(SRC) \
     $(LOCAL_PATH)/$(SRC)/cJSON \
