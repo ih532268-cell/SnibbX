@@ -10,6 +10,9 @@ on:
       - "res/**"
       - ".github/workflows/build-apk.yml"
 
+permissions:
+  contents: write   # required to create a GitHub Release
+
 env:
   SDL_TAG: release-2.30.12   # exact version whose sources/Java glue we read locally
 
@@ -138,10 +141,18 @@ jobs:
           unzip -l snibbetracker-armv7-debug.apk | grep -q "lib/armeabi-v7a/libSDL2.so"  || { echo "::error title=apk::libSDL2.so missing"; exit 1; }
           echo "::notice title=apk verify::armeabi-v7a libmain.so + libSDL2.so present"
 
-      - name: Upload APK
+      - name: Publish APK as GitHub Release
         if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: snibbetracker-armv7-debug
-          path: out/snibbetracker-armv7-debug.apk
-          retention-days: 7
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          SHA=$(git rev-parse --short HEAD)
+          TAG="apk-${GITHUB_RUN_NUMBER}-${SHA}"
+          gh release create "$TAG" out/snibbetracker-armv7-debug.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "snibbetracker armv7 debug build #${GITHUB_RUN_NUMBER} (${SHA})" \
+            --notes "Debug APK, armeabi-v7a only. Experimental port; no touch keyboard yet. Open the LOG button (top-right) to copy the log if something fails." \
+            --prerelease
+          echo "::notice title=release::published $TAG"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets --jq '.url, (.assets[] | "asset: \(.name) \(.size) bytes")'
