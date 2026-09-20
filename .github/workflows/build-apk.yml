@@ -1,0 +1,143 @@
+name: build-apk
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "snibbetracker/**"
+      - "android/**"
+      - "res/**"
+      - ".github/workflows/build-apk.yml"
+
+env:
+  SDL_TAG: release-2.30.12   # exact version whose sources/Java glue we read locally
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Fetch SDL (pinned tag)
+        run: |
+          git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git /tmp/SDL
+          echo "SDL at $(git -C /tmp/SDL rev-parse --short HEAD)"
+
+      - name: Assemble Android project
+        run: |
+          set -eu
+          P=/tmp/proj
+          rm -rf "$P"
+          cp -r /tmp/SDL/android-project "$P"
+
+          # SDL itself: linked as jni/SDL (this is what SDL's own template expects)
+          ln -s /tmp/SDL "$P/app/jni/SDL"
+
+          # our NDK module replaces the template's placeholder module
+          rm -rf "$P/app/jni/src"
+          mkdir -p "$P/app/jni/src/engine"
+          cp android/jni/src/Android.mk android/jni/src/android_log.c android/jni/src/android_log.h "$P/app/jni/src/"
+          cp -r snibbetracker/src/* "$P/app/jni/src/engine/"
+          # engine dir contains files we must not compile on Android
+          rm -f "$P/app/jni/src/engine/dir_win.c" "$P/app/jni/src/engine/dir_win.h" \
+                "$P/app/jni/src/engine/osx_settings.m" "$P/app/jni/src/engine/osx_settings.h"
+          cp android/jni/Application.mk "$P/app/jni/Application.mk"
+
+          # Java: SDL's own classes (from the pinned tag) + our two
+          cp android/java/org/libsdl/app/*.java "$P/app/src/main/java/org/libsdl/app/"
+
+          # manifest + resources
+          cp android/AndroidManifest.xml "$P/app/src/main/AndroidManifest.xml"
+          cp android/res/values/strings.xml "$P/app/src/main/res/values/strings.xml"
+
+          # demo songs + default config go into the APK assets
+          mkdir -p "$P/app/src/main/assets/demos"
+          cp res/demos/*.snibb "$P/app/src/main/assets/demos/"
+
+          echo "tree:"; (cd "$P/app" && find jni/src src/main -maxdepth 4 -type f | sort | head -60)
+
+      - name: Restrict Gradle to armeabi-v7a (verified edit)
+        run: |
+          set -eu
+          G=/tmp/proj/app/build.gradle
+          # match only the ACTIVE line (starts with whitespace + abiFilters); the same text also
+          # appears once inside a "// ..." commented cmake block, which must be left alone.
+          pat="^[[:space:]]*abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'[[:space:]]*$"
+          before=$(grep -cE "$pat" "$G" || true)
+          [ "$before" = "1" ] || { echo "::error title=gradle edit::active abiFilters line found $before times (expected 1)"; exit 1; }
+          sed -i -E "s/^([[:space:]]*)abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'[[:space:]]*$/\\1abiFilters 'armeabi-v7a'/" "$G"
+          after=$(grep -cE "^[[:space:]]*abiFilters 'armeabi-v7a'[[:space:]]*$" "$G" || true)
+          [ "$after" = "1" ] || { echo "::error title=gradle edit::sed did not apply (matches after: $after)"; exit 1; }
+          grep -n "abiFilters" "$G"
+          grep -n "namespace" "$G"
+
+      - name: Pre-flight (fail fast, readable)
+        run: |
+          set -u
+          fail=0
+          check() { if [ -e "$1" ]; then echo "ok   $1"; else echo "MISSING $1"; echo "::error title=preflight::missing $1"; fail=1; fi; }
+          P=/tmp/proj/app
+          check $P/jni/SDL/include/SDL.h
+          check $P/jni/SDL/Android.mk
+          check $P/jni/src/Android.mk
+          check $P/jni/src/engine/main.c
+          check $P/jni/src/engine/cJSON/cJSON.c
+          check $P/jni/src/android_log.c
+          check $P/src/main/java/org/libsdl/app/SDLActivity.java
+          check $P/src/main/java/org/libsdl/app/SnibbeActivity.java
+          check $P/src/main/assets/demos/catslayer.snibb
+          check $P/src/main/AndroidManifest.xml
+          exit $fail
+
+      - name: Build debug APK
+        id: gradle
+        working-directory: /tmp/proj
+        run: |
+          set +e
+          chmod +x gradlew
+          ./gradlew --no-daemon --console=plain assembleDebug > /tmp/gradle.log 2>&1
+          rc=$?
+          echo "gradle exit code: $rc"
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          # The raw job log is not reachable from the developer's sandbox, only annotations are.
+          # So surface the interesting lines as annotations (GitHub caps these, keep it tight).
+          grep -nE "error:|FAILED|What went wrong|Execution failed|undefined reference|fatal error|cannot find|not found|AAPT|Unresolved" /tmp/gradle.log \
+            | head -25 | while IFS= read -r line; do
+                msg=${line//%/%25}; msg=${msg//$'\r'/}; 
+                echo "::error title=gradle::${msg:0:900}"
+              done
+          echo "----- last 40 lines of gradle log -----"
+          tail -40 /tmp/gradle.log
+          exit $rc
+
+      - name: Locate APK
+        if: success()
+        run: |
+          find /tmp/proj/app/build/outputs -name "*.apk" -exec ls -la {} \;
+          mkdir -p out && cp /tmp/proj/app/build/outputs/apk/debug/*.apk out/snibbetracker-armv7-debug.apk
+          echo "::notice title=apk::built $(du -h out/snibbetracker-armv7-debug.apk | cut -f1)"
+
+      - name: Verify APK contents (ABI + our classes)
+        if: success()
+        run: |
+          set -u
+          cd out
+          unzip -l snibbetracker-armv7-debug.apk | grep -E "lib/|assets/demos|classes" | head -20
+          unzip -l snibbetracker-armv7-debug.apk | grep -q "lib/armeabi-v7a/libmain.so"  || { echo "::error title=apk::libmain.so missing"; exit 1; }
+          unzip -l snibbetracker-armv7-debug.apk | grep -q "lib/armeabi-v7a/libSDL2.so"  || { echo "::error title=apk::libSDL2.so missing"; exit 1; }
+          echo "::notice title=apk verify::armeabi-v7a libmain.so + libSDL2.so present"
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snibbetracker-armv7-debug
+          path: out/snibbetracker-armv7-debug.apk
+          retention-days: 7

@@ -3,11 +3,6 @@ name: probe-armv7
 # No SDL Java glue / APK yet. We compile with SDL2 headers only (-c, no link) to surface source-level problems.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "snibbetracker/**"
-      - ".github/workflows/probe-armv7.yml"
 
 jobs:
   compile:

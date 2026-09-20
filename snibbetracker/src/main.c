@@ -61,6 +61,13 @@
     #include "dir_posix.h"
     #include "osx_settings.h"
 #endif
+#elif defined(__ANDROID__)
+// android: same code paths as linux (posix dir listing, config in pref path)
+    #define TARGET_OS_LINUX 1
+    #define platform_linux
+    #define platform_android
+    #include "dir_posix.h"
+    #include "android_log.h"
 #elif __linux
 // linux
     #define TARGET_OS_LINUX 1
@@ -815,10 +822,12 @@ static char *load_file(char *path) {
             long sz = 0;
             sz = ftell(fp);
             char *b = NULL;
-            b = cAllocatorAlloc(sizeof(char)*sz, "load file chars");
+            b = cAllocatorAlloc(sizeof(char)*(sz+1), "load file chars");
             if(b != NULL) {
                 fseek(fp, 0, SEEK_SET);
-                fread(b, sz, 1, fp);
+                size_t got = fread(b, 1, (size_t)sz, fp);
+                b[got] = '\0';
+                fclose(fp);
                 return b;
             } else {
                 if(errorlog) { printf("buffer is null\n"); }
@@ -4292,19 +4301,28 @@ static void setup_sdl(void) {
 		}
 	}
 	
+#if defined(platform_android)
+    fullscreen = true;
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+    alog_write("SDL video driver: %s", SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "(none)");
+    window = SDL_CreateWindow("", 0, 0, width, height, SDL_WINDOW_FULLSCREEN | SDL_WINDOW_SHOWN);
+    if(window == NULL) { alog_write("SDL_CreateWindow failed: %s", SDL_GetError()); }
+#else
     if(fullscreen) {
         window = SDL_CreateWindow("", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN_DESKTOP);
     } else {
         window = SDL_CreateWindow("", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_OPENGL);
     }
+#endif
     
     if(window != NULL) {
-		
+#if !defined(platform_android)
 		context = SDL_GL_CreateContext(window);
 		if(context == NULL) {
 			printf("\nFailed to create context: %s\n", SDL_GetError());
 			st_pause();
 		}
+#endif
 
         renderer = SDL_CreateRenderer(window, -1, 0);
         if (renderer != NULL) {
@@ -4594,6 +4612,28 @@ static int get_buffer_size_from_index(int i) {
 
 }
 
+#if defined(platform_android)
+static void copy_project_win_lin(const char *name) {
+    char asset[256];
+    char out[1100];
+    snprintf(asset, sizeof(asset), "demos/%s", name);
+    snprintf(out, sizeof(out), "%s%s", conf_default_dir ? conf_default_dir : "", name);
+    SDL_RWops *rw = SDL_RWFromFile(asset, "rb");
+    if (rw == NULL) { alog_write("demo asset missing: %s (%s)", asset, SDL_GetError()); return; }
+    Sint64 sz = SDL_RWsize(rw);
+    if (sz <= 0) { alog_write("demo asset empty: %s", asset); SDL_RWclose(rw); return; }
+    char *buf = (char*)malloc((size_t)sz);
+    if (buf == NULL) { SDL_RWclose(rw); return; }
+    size_t got = SDL_RWread(rw, buf, 1, (size_t)sz);
+    SDL_RWclose(rw);
+    FILE *fp = fopen(out, "wb");
+    if (fp == NULL) { alog_write("cannot write demo: %s", out); free(buf); return; }
+    fwrite(buf, 1, got, fp);
+    fclose(fp);
+    free(buf);
+    alog_write("copied demo %s (%d bytes)", name, (int)got);
+}
+#else
 static void copy_project_win_lin(const char *name) {
     char *read_path = cAllocatorAlloc((1024 * sizeof(char*)), "win path 1");
     #if defined(platform_windows)
@@ -4618,6 +4658,7 @@ static void copy_project_win_lin(const char *name) {
     cAllocatorFree(read_path);
 	cAllocatorFree(write_path);
 }
+#endif
 
 static void load_config(void) {
     // for windows
@@ -4894,12 +4935,19 @@ static bool parse_config(char *json) {
 }
 
 static void st_pause(void) {
-    
+#if defined(platform_android)
+    alog_write("st_pause() called (would freeze 5s on desktop)");
+#else
 	SDL_Delay(5000);
+#endif
 }
 
 static void st_log(char *message) {
     
+#if defined(platform_android)
+    alog_write("%s", message);
+    alog_flush();
+#endif
     if(debuglog) {
         printf("*** %s \n", message);
     }
@@ -4907,6 +4955,17 @@ static void st_log(char *message) {
 
 int main(int argc, char* argv[]) {
     
+#if defined(platform_android)
+    {
+        /* Java (SnibbeLog) reads this file on next launch to show a native crash. */
+        static char crash_path[1100];
+        char *pp = SDL_GetPrefPath("lundstroem", "snibbetracker");
+        snprintf(crash_path, sizeof(crash_path), "%scrash_log.txt", pp ? pp : "/data/local/tmp/");
+        alog_init(crash_path);
+        alog_write("main() entered; pref path: %s", pp ? pp : "(NULL)");
+        alog_flush();
+    }
+#endif
     // override to use exe dir as default_dir
     bool path_defined = false;
     #if defined(platform_windows)
@@ -4932,10 +4991,17 @@ int main(int argc, char* argv[]) {
     }
 	
     base_dir = SDL_GetBasePath();
+    #if defined(platform_android)
+    if (base_dir == NULL) {
+        /* expected on Android; demos come from APK assets instead */
+        base_dir = "";
+    }
+    #else
     if (base_dir == NULL) {
         if(debuglog) { printf("SDL_GetBasePath returned NULL\n"); }
         return 1;
     }
+    #endif
     
     #if defined(platform_windows)||defined(platform_linux)
         load_config();
@@ -4974,9 +5040,20 @@ int main(int argc, char* argv[]) {
     
     if(run_with_sdl) {
         if (texture != NULL) {
+#if defined(platform_android)
+            alog_write("STARTUP OK: entering main loop");
+            alog_flush();
+#endif
             while (!quit) {
                 main_loop();
             }
+        } else {
+#if defined(platform_android)
+            alog_write("FATAL: texture is NULL, cannot start main loop (window=%p renderer=%p): %s",
+                       (void*)window, (void*)renderer, SDL_GetError());
+            alog_flush();
+            SDL_Delay(600000); /* keep process alive so Java can show the log */
+#endif
         }
     }
 
