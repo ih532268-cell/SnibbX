@@ -27,21 +27,25 @@ jobs:
 
       - name: Compile each source for armv7 (compile only)
         run: |
-          set -u
           NDK="$ANDROID_NDK_LATEST_HOME"
           CC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi24-clang"
           "$CC" --version | head -1
           SRC=snibbetracker/src
           FAIL=0
           for f in CAllocator CEngine CInput CSynth main dir_posix cJSON/cJSON; do
-            echo "::group::compile $f.c"
+            LOG="/tmp/$(basename $f).log"
             if "$CC" -c -std=gnu99 -Wall -Wno-unused-function \
                  -I"$SRC" -I"$SRC/cJSON" -I/tmp/SDL/include \
-                 "$SRC/$f.c" -o "/tmp/$(basename $f).o"; then
-              echo "OK  $f.c"
+                 "$SRC/$f.c" -o "/tmp/$(basename $f).o" >"$LOG" 2>&1; then
+              echo "OK   $f.c ($(grep -c 'warning:' "$LOG") warnings)"
             else
               echo "FAIL $f.c"; FAIL=1
+              # surface each compiler error as a GitHub annotation so it is readable via the API
+              grep -E "error:" "$LOG" | head -15 | while IFS= read -r line; do
+                echo "::error title=compile $f.c::${line//%/%25}"
+              done
             fi
-            echo "::endgroup::"
           done
+          # also publish an overall summary line as a notice
+          echo "::notice title=probe result::failures=$FAIL"
           exit $FAIL
