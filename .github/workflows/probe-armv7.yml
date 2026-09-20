@@ -19,6 +19,7 @@ jobs:
         run: |
           git clone --depth 1 --branch release-2.30.x https://github.com/libsdl-org/SDL.git /tmp/SDL
           ls /tmp/SDL/include | head -3
+          mkdir -p /tmp/sdlinc && ln -s /tmp/SDL/include /tmp/sdlinc/SDL2
 
       - name: Show NDK
         run: |
