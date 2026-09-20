@@ -36,7 +36,7 @@ jobs:
           for f in CAllocator CEngine CInput CSynth main dir_posix cJSON/cJSON; do
             LOG="/tmp/$(basename $f).log"
             if "$CC" -c -std=gnu99 -Wall -Wno-unused-function \
-                 -I"$SRC" -I"$SRC/cJSON" -I/tmp/SDL/include \
+                 -I"$SRC" -I"$SRC/cJSON" -I/tmp/sdlinc -I/tmp/SDL/include \
                  "$SRC/$f.c" -o "/tmp/$(basename $f).o" >"$LOG" 2>&1; then
               echo "OK   $f.c ($(grep -c 'warning:' "$LOG") warnings)"
             else
