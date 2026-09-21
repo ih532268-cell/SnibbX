@@ -7,6 +7,8 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.view.Gravity;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -20,6 +22,9 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
+import java.util.List;
+
 /**
  * SDLActivity + an always-available log viewer.
  *
@@ -30,6 +35,7 @@ import android.widget.Toast;
 public class SnibbeActivity extends SDLActivity {
 
     private String loadError = null;
+    private SongTransfer transfer;
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     @Override
@@ -69,24 +75,120 @@ public class SnibbeActivity extends SDLActivity {
         }
     }
 
+    /**
+     * Same look and size as the "KB" button drawn by the C touch layer (touch_kb.c):
+     * height/9 wide, two thirds of that plus 8 px tall, dark translucent box, 6 px from the corner.
+     * The size follows the screen height, exactly like the C code, so they stay identical on any phone.
+     */
+    private Button cornerButton(String label, int widthPx, int heightPx) {
+        Button b = new Button(this);
+        b.setText(label);
+        b.setAllCaps(false);
+        b.setTextColor(Color.WHITE);
+        b.setTypeface(Typeface.MONOSPACE);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_PX, heightPx * 0.34f);
+        b.setBackgroundColor(0xC8282828);   // rgb(40,40,40) alpha 200, same as KB
+        b.setPadding(0, 0, 0, 0);
+        b.setMinWidth(0);
+        b.setMinHeight(0);
+        b.setMinimumWidth(0);
+        b.setMinimumHeight(0);
+        b.setGravity(Gravity.CENTER);
+        b.setStateListAnimator(null);       // no elevation shadow: KB is flat
+        return b;
+    }
+
     private void addLogButton() {
         if (mLayout == null) return;
-        Button b = new Button(this);
-        b.setText("LOG");
-        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        b.setTextColor(Color.WHITE);
-        b.setBackgroundColor(0x99000000);
-        b.setAllCaps(false);
-        b.setPadding(12, 4, 12, 4);
-        b.setOnClickListener(new View.OnClickListener() {
+        int screenH = mLayout.getResources().getDisplayMetrics().heightPixels;
+        int sz = Math.max(screenH / 9, 48);
+        final int w = sz;
+        final int h = sz * 2 / 3 + 8;
+        final int margin = 6;
+
+        Button log = cornerButton("LOG", w, h);
+        log.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showReport(false); }
         });
-        RelativeLayout.LayoutParams lp = new RelativeLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.addRule(RelativeLayout.ALIGN_PARENT_TOP);
-        lp.addRule(RelativeLayout.ALIGN_PARENT_RIGHT);
-        lp.setMargins(0, 4, 4, 0);
-        mLayout.addView(b, lp);
+        RelativeLayout.LayoutParams lpLog = new RelativeLayout.LayoutParams(w, h);
+        lpLog.addRule(RelativeLayout.ALIGN_PARENT_TOP);
+        lpLog.addRule(RelativeLayout.ALIGN_PARENT_RIGHT);
+        lpLog.setMargins(0, margin, margin, 0);
+        mLayout.addView(log, lpLog);
+
+        // FILE sits just left of LOG so it never overlaps the KB button on the other side
+        Button file = cornerButton("FILE", w, h);
+        file.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showFileMenu(); }
+        });
+        RelativeLayout.LayoutParams lpFile = new RelativeLayout.LayoutParams(w, h);
+        lpFile.addRule(RelativeLayout.ALIGN_PARENT_TOP);
+        lpFile.addRule(RelativeLayout.ALIGN_PARENT_RIGHT);
+        lpFile.setMargins(0, margin, margin + w + margin, 0);
+        mLayout.addView(file, lpFile);
+    }
+
+    // ------------------------------------------------------------------ songs: export / import
+
+    private SongTransfer transfer() {
+        if (transfer == null) {
+            // The engine keeps songs in SDL_GetPrefPath(), which on Android is exactly getFilesDir().
+            transfer = new SongTransfer(this, getFilesDir());
+        }
+        return transfer;
+    }
+
+    private void showFileMenu() {
+        final String[] items = { "Export a song (save to phone / share)", "Import a song from a file" };
+        new AlertDialog.Builder(this)
+            .setTitle("Songs")
+            .setItems(items, new DialogInterface.OnClickListener() {
+                @Override public void onClick(DialogInterface d, int which) {
+                    if (which == 0) chooseSongToExport(); else report(transfer().startImport());
+                }
+            })
+            .setNegativeButton("Close", null)
+            .show();
+    }
+
+    private void chooseSongToExport() {
+        final List<File> songs = transfer().listSongs();
+        if (songs.isEmpty()) {
+            Toast.makeText(this, "No saved songs yet. Save one with Ctrl + S first.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        final String[] names = new String[songs.size()];
+        for (int i = 0; i < names.length; i++) names[i] = songs.get(i).getName();
+        new AlertDialog.Builder(this)
+            .setTitle("Export which song?")
+            .setItems(names, new DialogInterface.OnClickListener() {
+                @Override public void onClick(DialogInterface d, int which) {
+                    report(transfer().startExport(songs.get(which)));
+                }
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    /** Shows the outcome of a step. Empty messages (a screen was opened successfully) stay silent. */
+    private void report(SongTransfer.Outcome o) {
+        if (o == null || o.message == null || o.message.length() == 0) return;
+        Toast.makeText(this, o.message, o.ok ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == SongTransfer.REQ_EXPORT) {
+            report(transfer().finishExport(resultCode, data));
+        } else if (requestCode == SongTransfer.REQ_IMPORT) {
+            SongTransfer.Outcome o = transfer().finishImport(resultCode, data);
+            report(o);
+            if (o.ok) {
+                Toast.makeText(this, "Open the song list in the tracker with Ctrl + O", Toast.LENGTH_LONG).show();
+            }
+        } else {
+            super.onActivityResult(requestCode, resultCode, data);
+        }
     }
 
     private void showReport(final boolean fromCrash) {
