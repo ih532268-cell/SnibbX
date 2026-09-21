@@ -70,20 +70,46 @@ jobs:
 
           echo "tree:"; (cd "$P/app" && find jni/src src/main -maxdepth 4 -type f | sort | head -60)
 
-      - name: Restrict Gradle to armeabi-v7a (verified edit)
+      - name: Configure Gradle for one APK per ABI (verified edit)
         run: |
           set -eu
           G=/tmp/proj/app/build.gradle
-          # match only the ACTIVE line (starts with whitespace + abiFilters); the same text also
-          # appears once inside a "// ..." commented cmake block, which must be left alone.
-          pat="^[[:space:]]*abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'[[:space:]]*$"
-          before=$(grep -cE "$pat" "$G" || true)
-          [ "$before" = "1" ] || { echo "::error title=gradle edit::active abiFilters line found $before times (expected 1)"; exit 1; }
-          sed -i -E "s/^([[:space:]]*)abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'[[:space:]]*$/\\1abiFilters 'armeabi-v7a'/" "$G"
-          after=$(grep -cE "^[[:space:]]*abiFilters 'armeabi-v7a'[[:space:]]*$" "$G" || true)
-          [ "$after" = "1" ] || { echo "::error title=gradle edit::sed did not apply (matches after: $after)"; exit 1; }
-          grep -n "abiFilters" "$G"
+          grep -q "^android {" "$G" || { echo "::error title=gradle edit::no 'android {' line found"; exit 1; }
+
+          cat > /tmp/inject.gradle <<'BLOCK'
+          android {
+              // one APK per ABI instead of a single universal APK containing all four .so files
+              splits {
+                  abi {
+                      enable true
+                      reset()
+                      include 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+                      universalApk false
+                  }
+              }
+          BLOCK
+
+          before=$(grep -c "^android {" "$G")
+          [ "$before" = "1" ] || { echo "::error title=gradle edit::expected exactly one 'android {' line, found $before"; exit 1; }
+          awk '/^android \{$/ && !done { while ((getline line < "/tmp/inject.gradle") > 0) print line; done=1; next } { print }' "$G" > /tmp/build.gradle.new
+          mv /tmp/build.gradle.new "$G"
+          grep -n "splits\|enable true\|universalApk" "$G"
+
+          cat >> "$G" <<'TAIL'
+
+          ext.abiCodes = ['armeabi-v7a': 1, 'arm64-v8a': 2, 'x86': 3, 'x86_64': 4]
+          android.applicationVariants.all { variant ->
+              variant.outputs.each { output ->
+                  def abi = output.getFilter(com.android.build.OutputFile.ABI)
+                  if (abi != null && project.ext.abiCodes.containsKey(abi)) {
+                      output.versionCodeOverride = variant.versionCode * 10 + project.ext.abiCodes[abi]
+                  }
+              }
+          }
+          TAIL
+
           grep -n "namespace" "$G"
+
 
       - name: Pre-flight (fail fast, readable)
         run: |
@@ -127,22 +153,55 @@ jobs:
           tail -40 /tmp/gradle.log
           exit $rc
 
-      - name: Locate APK
+      - name: Locate APKs (one per ABI)
         if: success()
         run: |
+          set -eu
           find /tmp/proj/app/build/outputs -name "*.apk" -exec ls -la {} \;
-          mkdir -p out && cp /tmp/proj/app/build/outputs/apk/debug/*.apk out/snibbetracker-armv7-debug.apk
-          echo "::notice title=apk::built $(du -h out/snibbetracker-armv7-debug.apk | cut -f1)"
+          mkdir -p out
+          shopt -s nullglob
+          any=0
+          for f in /tmp/proj/app/build/outputs/apk/debug/*.apk; do
+            base=$(basename "$f")
+            # gradle names split outputs like "app-armeabi-v7a-debug.apk"; keep the ABI, drop the rest
+            abi=$(echo "$base" | grep -oE 'armeabi-v7a|arm64-v8a|x86_64|x86' || true)
+            if [ -z "$abi" ]; then
+              echo "::warning title=apk::skipping unrecognised output $base"
+              continue
+            fi
+            cp "$f" "out/SnibbX-${abi}-debug.apk"
+            any=1
+          done
+          [ "$any" = "1" ] || { echo "::error title=apk::no per-ABI APK was produced at all"; exit 1; }
+          ls -la out/
+          for f in out/*.apk; do echo "::notice title=apk::built $(basename "$f") ($(du -h "$f" | cut -f1))"; done
 
       - name: Verify APK contents (ABI + our classes)
         if: success()
         run: |
           set -u
           cd out
-          unzip -l snibbetracker-armv7-debug.apk | grep -E "lib/|assets/demos|classes" | head -20
-          unzip -l snibbetracker-armv7-debug.apk | grep -q "lib/armeabi-v7a/libmain.so"  || { echo "::error title=apk::libmain.so missing"; exit 1; }
-          unzip -l snibbetracker-armv7-debug.apk | grep -q "lib/armeabi-v7a/libSDL2.so"  || { echo "::error title=apk::libSDL2.so missing"; exit 1; }
-          echo "::notice title=apk verify::armeabi-v7a libmain.so + libSDL2.so present"
+          fail=0
+          for f in *.apk; do
+            abi=$(echo "$f" | sed -E 's/^SnibbX-(.*)-debug\.apk$/\1/')
+            echo "--- $f (abi=$abi) ---"
+            unzip -l "$f" | grep -E "lib/|assets/demos|classes" | head -10
+            if ! unzip -l "$f" | grep -q "lib/${abi}/libmain.so"; then
+              echo "::error title=apk::libmain.so missing for $abi in $f"; fail=1
+            fi
+            if ! unzip -l "$f" | grep -q "lib/${abi}/libSDL2.so"; then
+              echo "::error title=apk::libSDL2.so missing for $abi in $f"; fail=1
+            fi
+            # a per-ABI split must contain ONLY that ABI's native libs, never another one's
+            other=$(unzip -l "$f" | grep -E "^\s*[0-9]+.*lib/" | grep -v "lib/${abi}/" || true)
+            if [ -n "$other" ]; then
+              echo "::error title=apk::$f contains native libs from a DIFFERENT abi:"
+              echo "$other"
+              fail=1
+            fi
+          done
+          [ "$fail" = "0" ] || exit 1
+          echo "::notice title=apk verify::all 4 ABI splits contain exactly their own libmain.so + libSDL2.so"
 
       - name: Publish APK as GitHub Release
         if: success()
@@ -152,10 +211,10 @@ jobs:
           set -eu
           SHA=$(git rev-parse --short HEAD)
           TAG="apk-${GITHUB_RUN_NUMBER}-${SHA}"
-          gh release create "$TAG" out/snibbetracker-armv7-debug.apk \
+          gh release create "$TAG" out/*.apk \
             --repo "$GITHUB_REPOSITORY" \
-            --title "snibbetracker armv7 debug build #${GITHUB_RUN_NUMBER} (${SHA})" \
-            --notes "Debug APK, armeabi-v7a only. Experimental port; no touch keyboard yet. Open the LOG button (top-right) to copy the log if something fails." \
+            --title "SnibbX debug build #${GITHUB_RUN_NUMBER} (${SHA})" \
+            --notes "Debug APKs (unsigned/debug-signed), one per ABI - pick the one matching your device: armeabi-v7a (most phones, 32-bit), arm64-v8a (most phones, 64-bit), x86 / x86_64 (emulators, some Chromebooks). Unofficial Android port of snibbetracker; touch keyboard, song export/import via FILE, and an in-app LOG viewer are all included. Open LOG (top-right) to copy the log if something fails." \
             --prerelease
           echo "::notice title=release::published $TAG"
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets --jq '.url, (.assets[] | "asset: \(.name) \(.size) bytes")'
