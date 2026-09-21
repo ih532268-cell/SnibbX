@@ -68,6 +68,7 @@
     #define platform_android
     #include "dir_posix.h"
     #include "android_log.h"
+    #include "touch_kb.h"
 #elif __linux
 // linux
     #define TARGET_OS_LINUX 1
@@ -108,6 +109,11 @@ static int s_height = 144*2; // 288
 static bool playing = false;
 static bool exporting = false;
 static bool editing = false;
+#if defined(platform_android)
+static TkbState g_tkb;
+static bool g_tkb_ready = false;
+static int g_win_w = 0, g_win_h = 0;
+#endif
 static bool modifier = false;
 static bool shift_down = false;
 static bool selection_enabled = false;
@@ -3176,6 +3182,17 @@ static void check_sdl_events(SDL_Event event) {
             case SDL_KEYUP:
                 handle_key_up(&event.key.keysym);
                 break;
+#if defined(platform_android)
+            case SDL_FINGERDOWN:
+                if(g_tkb_ready) { tkb_finger_down(&g_tkb, (int)event.tfinger.fingerId, event.tfinger.x, event.tfinger.y); }
+                break;
+            case SDL_FINGERMOTION:
+                if(g_tkb_ready) { tkb_finger_move(&g_tkb, (int)event.tfinger.fingerId, event.tfinger.x, event.tfinger.y); }
+                break;
+            case SDL_FINGERUP:
+                if(g_tkb_ready) { tkb_finger_up(&g_tkb, (int)event.tfinger.fingerId, event.tfinger.x, event.tfinger.y); }
+                break;
+#endif
         }
     }
 }
@@ -4336,6 +4353,16 @@ static void setup_sdl(void) {
                 SDL_RenderSetLogicalSize(renderer, width, height);
             }
             
+#if defined(platform_android)
+            {
+                int ow = 0, oh = 0;
+                SDL_GetRendererOutputSize(renderer, &ow, &oh);
+                g_win_w = ow; g_win_h = oh;
+                int top = tkb_layout(&g_tkb, ow, oh);
+                g_tkb_ready = true;
+                alog_write("renderer output %dx%d, touch keyboard: %d keys, tracker area height %d", ow, oh, g_tkb.count, top);
+            }
+#endif
             SDL_GL_SetSwapInterval(1);
             char title_string[256];
             snprintf(title_string, 255, "%s", title);
@@ -4560,8 +4587,28 @@ static void main_loop(void) {
     
     SDL_UpdateTexture(texture, NULL, raster, s_width * sizeof (unsigned int));
     SDL_RenderClear(renderer);
+#if defined(platform_android)
+    if(g_tkb_ready) {
+        /* work in real window pixels: drop the logical-size letterboxing for this frame */
+        SDL_RenderSetLogicalSize(renderer, 0, 0);
+        int avail_h = g_tkb.area_top;
+        /* fit s_width:s_height (16:9) into g_win_w x avail_h */
+        int dw = g_win_w, dh = g_win_w * s_height / s_width;
+        if(dh > avail_h) { dh = avail_h; dw = avail_h * s_width / s_height; }
+        SDL_Rect dst = { (g_win_w - dw) / 2, (avail_h - dh) / 2, dw, dh };
+        SDL_RenderCopy(renderer, texture, NULL, &dst);
+        tkb_tick(&g_tkb, SDL_GetTicks());
+        tkb_draw_renderer(&g_tkb, renderer);
+        SDL_RenderPresent(renderer);
+        SDL_RenderSetLogicalSize(renderer, width, height);
+    } else {
+        SDL_RenderCopy(renderer, texture, NULL, NULL);
+        SDL_RenderPresent(renderer);
+    }
+#else
     SDL_RenderCopy(renderer, texture, NULL, NULL);
     SDL_RenderPresent(renderer);
+#endif
     
     int dt = get_delta();
     last_dt = dt;

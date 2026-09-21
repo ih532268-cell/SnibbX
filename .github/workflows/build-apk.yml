@@ -46,7 +46,8 @@ jobs:
           # our NDK module replaces the template's placeholder module
           rm -rf "$P/app/jni/src"
           mkdir -p "$P/app/jni/src/engine"
-          cp android/jni/src/Android.mk android/jni/src/android_log.c android/jni/src/android_log.h "$P/app/jni/src/"
+          cp android/jni/src/Android.mk android/jni/src/android_log.c android/jni/src/android_log.h \
+             android/jni/src/touch_kb.c android/jni/src/touch_kb.h "$P/app/jni/src/"
           cp -r snibbetracker/src/* "$P/app/jni/src/engine/"
           # <SDL2/SDL.h> support (see Android.mk): sdl2_prefix/SDL2 -> SDL's include dir
           mkdir -p "$P/app/jni/src/sdl2_prefix"
@@ -97,6 +98,8 @@ jobs:
           check $P/jni/src/engine/main.c
           check $P/jni/src/engine/cJSON/cJSON.c
           check $P/jni/src/android_log.c
+          check $P/jni/src/touch_kb.c
+          check $P/jni/src/touch_kb.h
           check $P/src/main/java/org/libsdl/app/SDLActivity.java
           check $P/src/main/java/org/libsdl/app/SnibbeActivity.java
           check $P/src/main/assets/demos/catslayer.snibb

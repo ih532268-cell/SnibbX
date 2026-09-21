@@ -27,7 +27,8 @@ LOCAL_SRC_FILES := \
     $(SRC)/cJSON/cJSON.c \
     $(SRC)/dir_posix.c \
     $(SRC)/main.c \
-    android_log.c
+    android_log.c \
+    touch_kb.c
 
 LOCAL_CFLAGS += -std=gnu99 -Wall -Wno-unused-function -Wno-format-truncation -Wno-stringop-truncation
 
