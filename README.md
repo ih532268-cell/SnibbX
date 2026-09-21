@@ -1,11 +1,12 @@
-# snibbetracker-android
+# SnibbX
 
-Experimental Android port of **snibbetracker**, a fakebit music tracker written in C with SDL2.
+Experimental, unofficial Android port of **snibbetracker**, a fakebit music tracker written in C with SDL2.
 
 - Original project: https://github.com/lundstroem/snibbetracker
-- Original author: Harry Lundström (MIT License, see `LICENSE`)
-- This repo only adds the Android build glue and a touch input layer. All original copyright
-  notices and the MIT license text are preserved.
+- Original author: Harry Lundström (MIT License)
+- This repo adds the Android build glue, a touch input layer, song export/import, and an in-app
+  log viewer. All original copyright notices and the MIT license text are preserved — see
+  `LICENSE` and `NOTICE.md` for exactly which files come from where.
 
 ## Status
 
