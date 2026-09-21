@@ -3184,7 +3184,11 @@ static void check_sdl_events(SDL_Event event) {
                 break;
 #if defined(platform_android)
             case SDL_FINGERDOWN:
-                if(g_tkb_ready) { tkb_finger_down(&g_tkb, (int)event.tfinger.fingerId, event.tfinger.x, event.tfinger.y); }
+                if(g_tkb_ready) {
+                    if(!tkb_toggle_finger_down(&g_tkb, event.tfinger.x, event.tfinger.y)) {
+                        tkb_finger_down(&g_tkb, (int)event.tfinger.fingerId, event.tfinger.x, event.tfinger.y);
+                    }
+                }
                 break;
             case SDL_FINGERMOTION:
                 if(g_tkb_ready) { tkb_finger_move(&g_tkb, (int)event.tfinger.fingerId, event.tfinger.x, event.tfinger.y); }
@@ -4586,12 +4590,15 @@ static void main_loop(void) {
     }
     
     SDL_UpdateTexture(texture, NULL, raster, s_width * sizeof (unsigned int));
+#if defined(platform_android)
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);   /* RenderClear uses the draw color: default was white */
+#endif
     SDL_RenderClear(renderer);
 #if defined(platform_android)
     if(g_tkb_ready) {
         /* work in real window pixels: drop the logical-size letterboxing for this frame */
         SDL_RenderSetLogicalSize(renderer, 0, 0);
-        int avail_h = g_tkb.area_top;
+        int avail_h = tkb_available_height(&g_tkb);
         /* fit s_width:s_height (16:9) into g_win_w x avail_h */
         int dw = g_win_w, dh = g_win_w * s_height / s_width;
         if(dh > avail_h) { dh = avail_h; dw = avail_h * s_width / s_height; }

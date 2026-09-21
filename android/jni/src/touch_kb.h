@@ -33,6 +33,7 @@ typedef struct {
     /* runtime state */
     int  finger;             /* finger id holding it, -1 if none */
     bool lit;                /* drawn highlighted */
+    bool sent_ctrl, sent_shift;  /* modifiers that were pressed together with this key's down event */
     Uint32 next_repeat;      /* SDL_GetTicks() of next auto repeat */
 } TkbKey;
 
@@ -56,6 +57,14 @@ bool tkb_finger_up  (TkbState *t, int finger, float fx, float fy);
 
 /* Call every frame to generate auto repeats. */
 void tkb_tick(TkbState *t, Uint32 now);
+
+/* A small always-visible "KB" toggle (top-left) that hides/shows the whole keyboard.
+ * Returns true if the touch was on the toggle (so the caller must not treat it as anything else). */
+bool tkb_toggle_finger_down(TkbState *t, float fx, float fy);
+void tkb_toggle_rect(const TkbState *t, int *x, int *y, int *w, int *h);
+
+/* Height the tracker may use right now: whole window when hidden, area_top when shown. */
+int  tkb_available_height(const TkbState *t);
 
 /* Returns the index of the key at a window pixel, or -1. */
 int  tkb_hit(const TkbState *t, int px, int py);

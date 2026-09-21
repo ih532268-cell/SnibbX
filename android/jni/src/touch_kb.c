@@ -32,19 +32,24 @@ static void inject(TkbState *t, SDL_Keycode sym, SDL_Scancode scan, bool down)
 /* A "modified" tap: modifier down -> key down -> key up -> modifier up, in that order.
  * The tracker sets `modifier` on key_lctrl down and clears it on key_lctrl up, so the order
  * matters: releasing the modifier BEFORE the key would lose it. */
-static void tap_with_modifiers(TkbState *t, SDL_Keycode sym, SDL_Scancode scan, bool down)
+static void tap_with_modifiers(TkbState *t, TkbKey *k, bool down)
 {
     if (down) {
-        if (t->ctrl_on)  inject(t, SDLK_LCTRL,  SDL_SCANCODE_LCTRL,  true);
-        if (t->shift_on) inject(t, SDLK_LSHIFT, SDL_SCANCODE_LSHIFT, true);
-        inject(t, sym, scan, true);
-    } else {
-        inject(t, sym, scan, false);
-        if (t->shift_on) inject(t, SDLK_LSHIFT, SDL_SCANCODE_LSHIFT, false);
-        if (t->ctrl_on)  inject(t, SDLK_LCTRL,  SDL_SCANCODE_LCTRL,  false);
-        /* sticky modifiers are one-shot */
+        /* remember exactly which modifiers accompany THIS key's down event */
+        k->sent_ctrl  = t->ctrl_on;
+        k->sent_shift = t->shift_on;
+        if (k->sent_ctrl)  inject(t, SDLK_LCTRL,  SDL_SCANCODE_LCTRL,  true);
+        if (k->sent_shift) inject(t, SDLK_LSHIFT, SDL_SCANCODE_LSHIFT, true);
+        inject(t, k->sym, k->scan, true);
+        /* sticky modifiers are one-shot: consumed by the key that used them */
         t->ctrl_on = false;
         t->shift_on = false;
+    } else {
+        inject(t, k->sym, k->scan, false);
+        /* release only what this key pressed - never a modifier that was armed AFTER the key went down */
+        if (k->sent_shift) inject(t, SDLK_LSHIFT, SDL_SCANCODE_LSHIFT, false);
+        if (k->sent_ctrl)  inject(t, SDLK_LCTRL,  SDL_SCANCODE_LCTRL,  false);
+        k->sent_ctrl = k->sent_shift = false;
     }
 }
 
@@ -147,7 +152,7 @@ int tkb_layout(TkbState *t, int win_w, int win_h)
     /* --- row 4: arrows, +/-, digits and hex letters used by parameter fields --- */
     static const Def bottom[] = {
         {"<", SDLK_LEFT,  SDL_SCANCODE_LEFT,  TKB_REPEAT, 2},
-        {"v", SDLK_DOWN,  SDL_SCANCODE_DOWN,  TKB_REPEAT, 2},
+        {"\x01", SDLK_DOWN,  SDL_SCANCODE_DOWN,  TKB_REPEAT, 2},
         {"^", SDLK_UP,    SDL_SCANCODE_UP,    TKB_REPEAT, 2},
         {">", SDLK_RIGHT, SDL_SCANCODE_RIGHT, TKB_REPEAT, 2},
         {"-", SDLK_MINUS, SDL_SCANCODE_MINUS, TKB_REPEAT, 2},
@@ -164,6 +169,37 @@ int tkb_layout(TkbState *t, int win_w, int win_h)
 }
 
 /* ------------------------------------------------------------------ touch handling */
+
+void tkb_toggle_rect(const TkbState *t, int *x, int *y, int *w, int *h)
+{
+    int sz = t->win_h / 9;               /* ~80px on a 720px tall screen */
+    if (sz < 48) sz = 48;
+    *x = 6; *y = 6; *w = sz; *h = sz * 2 / 3 + 8;
+}
+
+int tkb_available_height(const TkbState *t)
+{
+    return t->visible ? t->area_top : t->win_h;
+}
+
+bool tkb_toggle_finger_down(TkbState *t, float fx, float fy)
+{
+    int x, y, w, h;
+    tkb_toggle_rect(t, &x, &y, &w, &h);
+    int px = (int)(fx * t->win_w), py = (int)(fy * t->win_h);
+    if (px < x || px >= x + w || py < y || py >= y + h) return false;
+    t->visible = !t->visible;
+    /* hiding while a key is held would leave it stuck: release everything first */
+    if (!t->visible) {
+        for (int i = 0; i < t->count; i++) {
+            TkbKey *k = &t->keys[i];
+            if (k->finger >= 0 && k->kind != TKB_STICKY) { tap_with_modifiers(t, k, false); }
+            k->finger = -1; k->lit = false;
+        }
+        t->ctrl_on = t->shift_on = false;
+    }
+    return true;
+}
 
 int tkb_hit(const TkbState *t, int px, int py)
 {
@@ -184,7 +220,7 @@ static void press(TkbState *t, TkbKey *k, int finger)
         k->lit = (k->sym == SDLK_LCTRL) ? t->ctrl_on : t->shift_on;
         return;                          /* nothing injected: it only arms the next key */
     }
-    tap_with_modifiers(t, k->sym, k->scan, true);
+    tap_with_modifiers(t, k, true);
     if (k->kind == TKB_REPEAT) k->next_repeat = SDL_GetTicks() + 400;
 }
 
@@ -195,7 +231,7 @@ static void release(TkbState *t, TkbKey *k)
         return;                          /* keep the toggled highlight */
     }
     if (k->finger >= 0) {
-        tap_with_modifiers(t, k->sym, k->scan, false);
+        tap_with_modifiers(t, k, false);
     }
     k->finger = -1;
     k->lit = false;
@@ -257,8 +293,12 @@ void tkb_tick(TkbState *t, Uint32 now)
         TkbKey *k = &t->keys[i];
         if (k->kind == TKB_REPEAT && k->finger >= 0 && now >= k->next_repeat) {
             /* repeat = a fresh down/up pair so the editor sees a new key each time */
-            tap_with_modifiers(t, k->sym, k->scan, false);
-            tap_with_modifiers(t, k->sym, k->scan, true);
+            bool c = k->sent_ctrl, sh = k->sent_shift;      /* what the first press used */
+            tap_with_modifiers(t, k, false);                /* releases key + those modifiers */
+            bool save_c = t->ctrl_on, save_s = t->shift_on; /* anything armed meanwhile stays armed */
+            t->ctrl_on = c; t->shift_on = sh;               /* re-press with the ORIGINAL modifiers */
+            tap_with_modifiers(t, k, true);
+            t->ctrl_on = save_c; t->shift_on = save_s;
             k->next_repeat = now + 90;
         }
     }
@@ -280,6 +320,10 @@ static void text(SDL_Renderer *r, int cx, int cy, const char *s, int scale,
                  Uint8 R, Uint8 G, Uint8 B)
 {
     int n = (int)strlen(s);
+    /* Lowercase g/p/q/y have descenders that do not fit our fixed 5x7 cell (they came out looking
+     * like 9 / a / reversed shapes on the phone). Single-letter key caps are shown in capitals. */
+    char one[2] = { 0, 0 };
+    if (n == 1 && s[0] >= 'a' && s[0] <= 'z') { one[0] = (char)(s[0] - 'a' + 'A'); s = one; }
     int w = n * 6 * scale - scale;
     int x = cx - w / 2, y = cy - (7 * scale) / 2;
     SDL_SetRenderDrawColor(r, R, G, B, 255);
@@ -296,6 +340,13 @@ static void text(SDL_Renderer *r, int cx, int cy, const char *s, int scale,
 
 void tkb_draw_renderer(const TkbState *t, SDL_Renderer *r)
 {
+    {   /* toggle button: drawn in both states, translucent so it never hides the tracker */
+        int x, y, w, h; tkb_toggle_rect(t, &x, &y, &w, &h);
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+        rect(r, x, y, w, h, 40, 40, 40, 200);
+        text(r, x + w / 2, y + h / 2, "KB", 3, t->visible ? 255 : 255, t->visible ? 140 : 255, t->visible ? 0 : 255);
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    }
     if (!t->visible) return;
     rect(r, 0, t->area_top, t->win_w, t->win_h - t->area_top, 12, 12, 12, 255);
 
@@ -311,7 +362,7 @@ void tkb_draw_renderer(const TkbState *t, SDL_Renderer *r)
         case 1: R = 70;  G = 70;  B = 90;  break;          /* black piano key */
         case 2: R = 70;  G = 70;  B = 70;  break;          /* command */
         case 3: R = 40;  G = 80;  B = 110; break;          /* views */
-        case 4: R = 110; G = 80;  B = 30;  break;          /* sticky */
+        case 4: R = 55;  G = 60;  B = 75;  break;          /* sticky (idle); orange = armed */
         }
         if (k->lit) { R = 255; G = 140; B = 0; }
         rect(r, k->x, k->y, k->w, k->h, R, G, B, 255);
@@ -357,6 +408,7 @@ static const unsigned char G_SYM_PERIOD[5] = {0x00,0x60,0x60,0x00,0x00};
 static const unsigned char G_SYM_LT[5]     = {0x08,0x14,0x22,0x41,0x00};
 static const unsigned char G_SYM_GT[5]     = {0x00,0x41,0x22,0x14,0x08};
 static const unsigned char G_SYM_UPARR[5]  = {0x04,0x02,0x7F,0x02,0x04};
+static const unsigned char G_SYM_DNARR[5]  = {0x10,0x20,0x7F,0x20,0x10};
 
 static const unsigned char *glyph(char c)
 {
@@ -372,7 +424,8 @@ static const unsigned char *glyph(char c)
     case '<': return G_SYM_LT;
     case '>': return G_SYM_GT;
     case '^': return G_SYM_UPARR;
-    case 'v': return G_LO['v' - 'a'];
+    case '\x01': return G_SYM_DNARR;
+    /* 'v' handled by the letter table; the down-arrow key uses the label "v" and is drawn as a capital V */
     }
     return G_UNK;
 }
