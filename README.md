@@ -7,6 +7,12 @@ This is **not** an official release and is not affiliated with the original auth
 see whether the unmodified tracker engine could be made to run on a phone, driven entirely by
 touch, with no keyboard or mouse.
 
+**Scope, honestly:** almost all of the actual tracker — the sound engine, the file format, the UI
+layout, every demo song — is Harry Lundström's original, untouched work (see
+[`NOTICE.md`](NOTICE.md)). What's added here is a comparatively small compatibility layer: a
+touch input method, an Android-specific file save/load path, and a build pipeline. It's a port,
+not a rewrite.
+
 <p align="center">
   <img src="docs/screenshots/empty-tracker-view.jpg" width="49%" />
   <img src="docs/screenshots/kb-command-rows.jpg" width="49%" />
@@ -16,23 +22,23 @@ touch, with no keyboard or mouse.
   <img src="docs/screenshots/file-menu-export-import.jpg" width="49%" />
 </p>
 
-## What works
+## What was added for Android
 
-- The engine itself is untouched (see [`NOTICE.md`](NOTICE.md)) — same sound engine, same file
-  format, same demo songs as upstream.
-- **On-screen keyboard**: a command row (F1–F9, Ctrl, Shift, Edit, Play, Del, Home, End, arrows),
-  plus a two-row piano laid out like the original PC keyboard shortcuts. Ctrl and Shift are
-  "sticky" — tap once to arm, then tap the next key; multi-touch chords work.
-  Tap the **KB** button (top-left) to hide/show the keyboard and give the tracker view the full
-  screen.
-- **Save / load** inside the app, exactly as on desktop (`Ctrl+S`, `Ctrl+O`).
-- **Export / Import** songs to/from the rest of the phone via **FILE** (top-right): Export opens
-  Android's own "save to…" screen (Downloads, Drive, a USB stick, anywhere); Import opens the
-  system file picker and validates the file before adding it, so a wrong file can't corrupt the
-  song list.
-- **In-app log viewer** (**LOG**, top-right): every run's log, plus the last crash if there was
-  one, viewable and copyable without a computer — tap it, then *Copy* or *Share*.
-- Runs on `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64` — see [Downloads](#downloads).
+- The engine itself is untouched aside from a handful of `#if defined(__ANDROID__)` blocks (see
+  [`NOTICE.md`](NOTICE.md) for the exact list) — same sound engine, same file format, same demo
+  songs as upstream.
+- An on-screen keyboard, since there's no physical one: a command row (F1–F9, Ctrl, Shift, Edit,
+  Play, Del, Home, End, arrows) plus a two-row piano laid out like the original PC keyboard
+  shortcuts. Ctrl and Shift are "sticky" (tap to arm, then tap the key to modify); multi-touch
+  works. The **KB** button (top-left) hides/shows it.
+- Save / load inside the app work as on desktop (`Ctrl+S`, `Ctrl+O`) — this needed an
+  Android-specific storage path, since the engine's own file paths don't apply on the platform.
+- **FILE** (top-right) adds a way to get songs in and out of the app on Android specifically:
+  Export opens the system "save to…" screen (Downloads, Drive, a USB stick, anywhere); Import
+  opens the system file picker and checks the file looks like a real song before adding it.
+- **LOG** (top-right): a small in-app viewer for the current run's log, or the last crash if there
+  was one, since there's no terminal to read it from on a phone.
+- Builds for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64` — see [Downloads](#downloads).
 
 ## What's missing / known limitations
 

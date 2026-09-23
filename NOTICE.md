@@ -36,13 +36,12 @@ text is kept alongside it.
 
     snibbetracker/src/cJSON/
 
-## 3. The Android port (this repository's additions)
+## 3. The Android port additions (this repository)
 
 Copyright (c) 2026 A-C
 
-Everything needed to build and run the engine above on Android: the touch
-keyboard, the in-app log/crash viewer, song export and import, the JNI glue,
-and the Gradle/NDK build scripts.
+A touch-input layer, Android-specific file handling, an in-app log viewer, and the Gradle/NDK
+build scripts — added on top of the complete engine above so it runs on a phone.
 
     android/
     tests/
