@@ -64,6 +64,22 @@ jobs:
           cp android/AndroidManifest.xml "$P/app/src/main/AndroidManifest.xml"
           cp android/res/values/strings.xml "$P/app/src/main/res/values/strings.xml"
 
+          # App icon: replace SDL's placeholder icon in every density bucket, and add the
+          # adaptive-icon (Android 8+) layers so launchers that mask icons (e.g. Samsung's
+          # circular mask) show the glyph correctly instead of a default/cropped image.
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            dst="$P/app/src/main/res/mipmap-$density"
+            mkdir -p "$dst"
+            cp "android/res/mipmap-$density/ic_launcher.png" "$dst/ic_launcher.png"
+            cp "android/res/mipmap-$density/ic_launcher_round.png" "$dst/ic_launcher_round.png"
+          done
+          mkdir -p "$P/app/src/main/res/mipmap-anydpi-v26" "$P/app/src/main/res/drawable"
+          cp android/res/mipmap-anydpi-v26/ic_launcher.xml       "$P/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+          cp android/res/mipmap-anydpi-v26/ic_launcher_round.xml "$P/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml"
+          cp android/res/drawable/ic_launcher_foreground.png  "$P/app/src/main/res/drawable/ic_launcher_foreground.png"
+          cp android/res/drawable/ic_launcher_monochrome.png  "$P/app/src/main/res/drawable/ic_launcher_monochrome.png"
+          cp android/res/drawable/ic_launcher_background.xml "$P/app/src/main/res/drawable/ic_launcher_background.xml"
+
           # demo songs + default config go into the APK assets
           mkdir -p "$P/app/src/main/assets/demos"
           cp res/demos/*.snibb "$P/app/src/main/assets/demos/"
@@ -126,6 +142,11 @@ jobs:
           check $P/jni/src/android_log.c
           check $P/jni/src/touch_kb.c
           check $P/jni/src/touch_kb.h
+          check $P/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          check $P/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          check $P/src/main/res/drawable/ic_launcher_foreground.png
+          check $P/src/main/res/drawable/ic_launcher_background.xml
+          check $P/src/main/res/drawable/ic_launcher_monochrome.png
           check $P/src/main/java/org/libsdl/app/SDLActivity.java
           check $P/src/main/java/org/libsdl/app/SnibbeActivity.java
           check $P/src/main/assets/demos/catslayer.snibb
