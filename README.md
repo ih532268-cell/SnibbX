@@ -102,6 +102,11 @@ Parts of this port that don't need a phone to verify (song-name sanitizing, impo
 touch keyboard's hit-testing and sticky-modifier logic) have unit tests you can run on a plain
 computer — see [`tests/README.md`](tests/README.md).
 
+## Contributors
+
+- The Android port additions (touch input, file handling, log viewer, build pipeline) were
+  developed with [Claude](https://claude.com) (Anthropic).
+
 ## License
 
 Three separate MIT-licensed parts are combined here — the original engine (Harry Lundström), the
