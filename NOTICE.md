@@ -44,6 +44,7 @@ A touch-input layer, Android-specific file handling, an in-app log viewer, and t
 build scripts — added on top of the complete engine above so it runs on a phone.
 
     android/
+    docs/
     tests/
     .github/workflows/
 
