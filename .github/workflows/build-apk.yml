@@ -22,6 +22,22 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + tags, required by the version step below
+
+      - name: Compute version
+        id: version
+        uses: paulhatch/semantic-version@v5.4.0
+        with:
+          tag_prefix: "v"
+          major_pattern: "/!:|BREAKING CHANGE:/"
+          minor_pattern: "/feat(\\(.+\\))?:/"
+          # pre-1.0.0: breaking changes bump minor instead of major (semver's own guidance
+          # for the 0.y.z "initial development" phase - see semver.org FAQ)
+          enable_prerelease_mode: true
+          # always tagged "-beta", never "-beta.N": the increment counter is intentionally
+          # left out of the format, so only a real feat:/fix: moves the version forward
+          version_format: "${major}.${minor}.${patch}-beta"
 
       - uses: actions/setup-java@v4
         with:
@@ -228,14 +244,30 @@ jobs:
         if: success()
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          VERSION_TAG: ${{ steps.version.outputs.version_tag }}
         run: |
           set -eu
           SHA=$(git rev-parse --short HEAD)
-          TAG="apk-${GITHUB_RUN_NUMBER}-${SHA}"
-          gh release create "$TAG" out/*.apk \
+          NOTES="Debug APKs (unsigned/debug-signed), one per ABI - pick the one matching your device: armeabi-v7a (most phones, 32-bit), arm64-v8a (most phones, 64-bit), x86 / x86_64 (emulators, some Chromebooks). Unofficial Android port of snibbetracker; touch keyboard, song export/import via FILE, and an in-app LOG viewer are all included. Open LOG (top-right) to copy the log if something fails."
+
+          # 1) versioned release: one per real version bump (v0.1.0-beta, v0.2.0-beta, ...),
+          #    so past builds stay reachable by tag.
+          gh release create "$VERSION_TAG" out/*.apk \
             --repo "$GITHUB_REPOSITORY" \
-            --title "SnibbX debug build #${GITHUB_RUN_NUMBER} (${SHA})" \
-            --notes "Debug APKs (unsigned/debug-signed), one per ABI - pick the one matching your device: armeabi-v7a (most phones, 32-bit), arm64-v8a (most phones, 64-bit), x86 / x86_64 (emulators, some Chromebooks). Unofficial Android port of snibbetracker; touch keyboard, song export/import via FILE, and an in-app LOG viewer are all included. Open LOG (top-right) to copy the log if something fails." \
+            --title "SnibbX $VERSION ($SHA)" \
+            --notes "$NOTES" \
             --prerelease
-          echo "::notice title=release::published $TAG"
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets --jq '.url, (.assets[] | "asset: \(.name) \(.size) bytes")'
+          echo "::notice title=release::published $VERSION_TAG"
+
+          # 2) rolling "latest" tag/release: always the newest build, so the README's download
+          #    link never goes stale. Recreated each run rather than appended to.
+          gh release delete latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest out/*.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "SnibbX $VERSION (latest build, $SHA)" \
+            --notes "$NOTES"$'\n\n'"Always the most recent successful build. For a specific past version see the [$VERSION_TAG](../../releases/tag/$VERSION_TAG) release instead." \
+            --prerelease
+          echo "::notice title=release::updated latest -> $VERSION_TAG"
+
+          gh release view "$VERSION_TAG" --repo "$GITHUB_REPOSITORY" --json url,assets --jq '.url, (.assets[] | "asset: \(.name) \(.size) bytes")'
