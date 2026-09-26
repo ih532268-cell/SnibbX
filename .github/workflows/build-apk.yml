@@ -36,8 +36,12 @@ jobs:
           # for the 0.y.z "initial development" phase - see semver.org FAQ)
           enable_prerelease_mode: true
           # always tagged "-beta", never "-beta.N": the increment counter is intentionally
-          # left out of the format, so only a real feat:/fix: moves the version forward
+          # left out of the format, so only a real feat:/fix: moves the version forward.
+          # version_format only affects the "version" output; the actual git tag this action
+          # would create is controlled separately by tag_format, which must match or the
+          # release tag and the version string end up inconsistent (v0.0.1 vs 0.0.1-beta).
           version_format: "${major}.${minor}.${patch}-beta"
+          tag_format: "v${major}.${minor}.${patch}-beta"
 
       - uses: actions/setup-java@v4
         with:
@@ -270,4 +274,6 @@ jobs:
             --prerelease
           echo "::notice title=release::updated latest -> $VERSION_TAG"
 
-          gh release view "$VERSION_TAG" --repo "$GITHUB_REPOSITORY" --json url,assets --jq '.url, (.assets[] | "asset: \(.name) \(.size) bytes")'
+          # informational only: a transient API-propagation delay here must not fail a step
+          # that has already successfully published both releases above
+          gh release view "$VERSION_TAG" --repo "$GITHUB_REPOSITORY" --json url,assets --jq '.url, (.assets[] | "asset: \(.name) \(.size) bytes")' || true
