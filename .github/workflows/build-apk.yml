@@ -35,13 +35,14 @@ jobs:
           # pre-1.0.0: breaking changes bump minor instead of major (semver's own guidance
           # for the 0.y.z "initial development" phase - see semver.org FAQ)
           enable_prerelease_mode: true
-          # always tagged "-beta", never "-beta.N": the increment counter is intentionally
-          # left out of the format, so only a real feat:/fix: moves the version forward.
-          # version_format only affects the "version" output; the actual git tag this action
-          # would create is controlled separately by tag_format, which must match or the
-          # release tag and the version string end up inconsistent (v0.0.1 vs 0.0.1-beta).
+          # This action does not create or read a separate "tag format" - it only computes a
+          # version string and reads existing tags matching tag_prefix + a bare major.minor.patch.
+          # version_format controls that computed string; we build our own release tag from it
+          # in the Publish step below (v${version}) rather than relying on a version_tag output.
           version_format: "${major}.${minor}.${patch}-beta"
-          tag_format: "v${major}.${minor}.${patch}-beta"
+
+      - name: Debug - show every version output (temporary)
+        run: echo '${{ toJSON(steps.version.outputs) }}'
 
       - uses: actions/setup-java@v4
         with:
@@ -245,7 +246,7 @@ jobs:
           echo "::notice title=apk verify::all 4 ABI splits contain exactly their own libmain.so + libSDL2.so"
 
       - name: Publish APK as GitHub Release
-        if: success()
+        if: false   # TEMPORARY: disabled for a version-output debug run, re-enabled right after
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
