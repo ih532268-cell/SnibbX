@@ -42,7 +42,17 @@ jobs:
           version_format: "${major}.${minor}.${patch}-beta"
 
       - name: Debug - show every version output (temporary)
-        run: echo "::notice title=version debug::${{ toJSON(steps.version.outputs) }}"
+        run: |
+          cat > /tmp/version_outputs.json << 'JSONEOF'
+          ${{ toJSON(steps.version.outputs) }}
+          JSONEOF
+          cat /tmp/version_outputs.json
+          python3 -c "
+          import json
+          d = json.load(open('/tmp/version_outputs.json'))
+          for k, v in d.items():
+              print(f'::notice title=version.{k}::{v}')
+          "
 
       - uses: actions/setup-java@v4
         with:
