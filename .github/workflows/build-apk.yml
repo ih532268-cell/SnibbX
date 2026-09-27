@@ -42,7 +42,7 @@ jobs:
           version_format: "${major}.${minor}.${patch}-beta"
 
       - name: Debug - show every version output (temporary)
-        run: echo '${{ toJSON(steps.version.outputs) }}'
+        run: echo "::notice title=version debug::${{ toJSON(steps.version.outputs) }}"
 
       - uses: actions/setup-java@v4
         with:
